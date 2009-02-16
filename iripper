@@ -17,12 +17,13 @@
 #   along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 
+from ConfigParser import ConfigParser
 from optparse import OptionParser
+import os.path
 import subprocess
 import sys
 import re
 from urllib2 import urlopen
-from urlparse import urljoin
 
 from BeautifulSoup import BeautifulSoup
 import feedparser
@@ -30,21 +31,27 @@ import feedparser
 
 def main(argv):
     op = OptionParser()
-    op.add_option('-b', '--base', metavar='URL')
     op.add_option('-f', '--feed', metavar='URL')
     op.add_option('-l', '--list', action='store_const', const='list', dest='action')
     op.add_option('-p', '--play', action='store_const', const='play', dest='action')
     op.add_option('-r', '--rip', action='store_const', const='rip', dest='action')
     op.add_option('-d', '--debug', action='count')
     op.set_defaults(action='play')
-    op.set_defaults(base='http://feeds.bbc.co.uk/iplayer/')
-    op.set_defaults(feed='bbc_radio_one/music/dance_and_electronica')
+    op.set_defaults(feed='http://feeds.bbc.co.uk/iplayer/bbc_radio_one/list')
     op.set_defaults(debug=0)
+    cp = ConfigParser()
+    cp.read(os.path.expanduser('~/.iripperrc'))
+    if cp.has_section('iripper'):
+        if cp.has_option('iripper', 'action'):
+            op.set_defaults(action=cp.get('iripper', 'action'))
+        if cp.has_option('iripper', 'feed'):
+            op.set_defaults(feed=cp.get('iripper', 'feed'))
+        if cp.has_option('iripper', 'debug'):
+            op.set_defaults(feed=cp.getint('iripper', 'debug'))
     options, args = op.parse_args(argv[1:])
-    feed_url = urljoin(options.base, '/'.join((options.feed, 'list')))
     if options.debug > 1:
-        print '#', feed_url
-    for entry in feedparser.parse(feed_url).entries:
+        print '#', options.feed
+    for entry in feedparser.parse(options.feed).entries:
         if args and not any(re.search(arg, entry.title, re.I) for arg in args):
             continue
         if options.action == 'list':
@@ -74,6 +81,7 @@ def main(argv):
             print '#', ' '.join(mplayer)
         if options.debug < 3:
             subprocess.call(mplayer)
+
 
 if __name__ == '__main__':
     main(sys.argv)
