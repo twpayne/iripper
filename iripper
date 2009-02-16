@@ -19,10 +19,12 @@
 
 from ConfigParser import ConfigParser
 from optparse import OptionParser
+import os
 import os.path
+import re
 import subprocess
 import sys
-import re
+from tempfile import gettempdir
 from urllib2 import urlopen
 
 from BeautifulSoup import BeautifulSoup
@@ -36,21 +38,29 @@ def main(argv):
     op.add_option('-p', '--play', action='store_const', const='play', dest='action')
     op.add_option('-r', '--rip', action='store_const', const='rip', dest='action')
     op.add_option('-s', '--seek', metavar='MINUTES', type='int')
+    op.add_option('--format', metavar='FORMAT')
+    op.add_option('-n', '--no-cache', action='store_false', dest='cache')
     op.add_option('-d', '--debug', action='count')
     op.set_defaults(action='play')
     op.set_defaults(feed='http://feeds.bbc.co.uk/iplayer/bbc_radio_one/list')
+    op.set_defaults(format='ra')
+    op.set_defaults(cache=True)
     op.set_defaults(debug=0)
     cp = ConfigParser()
     cp.read(os.path.expanduser('~/.iripperrc'))
     if cp.has_section('iripper'):
-        if cp.has_option('iripper', 'action'):
-            op.set_defaults(action=cp.get('iripper', 'action'))
         if cp.has_option('iripper', 'feed'):
             op.set_defaults(feed=cp.get('iripper', 'feed'))
+        if cp.has_option('iripper', 'action'):
+            op.set_defaults(action=cp.get('iripper', 'action'))
+        if cp.has_option('iripper', 'cache'):
+            op.set_defaults(cache=cp.getboolean('iripper', 'cache'))
+        if cp.has_option('iripper', 'format'):
+            op.set_defaults(rip_format=cp.get('iripper', 'format'))
         if cp.has_option('iripper', 'debug'):
             op.set_defaults(debug=cp.getint('iripper', 'debug'))
     options, args = op.parse_args(argv[1:])
-    if options.debug > 1:
+    if options.debug > 0:
         print '#', options.feed
     for entry in feedparser.parse(options.feed).entries:
         if args and not any(re.search(arg, entry.title, re.I) for arg in args):
@@ -60,30 +70,65 @@ def main(argv):
             continue
         if options.debug > 0:
             print '#', entry.title
-        mplayer = ['mplayer', '-bandwidth', '10000000', '-rtsp-stream-over-tcp']
-        if options.action == 'play':
-            mplayer.extend(['-cache', '65536'])
-        elif options.action == 'rip':
-            m = re.match(r'(.*):\s+(\d+)/(\d+)/(\d+)\Z', entry.title)
-            dumpfile = '-'.join(m.group(i) for i in (1, 4, 3, 2)) if m else entry.title
-            dumpfile = re.sub(r'[^\w]+', '-', dumpfile.lower()) + '.ra'
-            mplayer.extend(['-dumpstream', '-dumpfile', dumpfile])
-        content_soup = BeautifulSoup(entry.content[0].value)
-        iplayer_url = content_soup.find('a')['href']
-        if options.debug > 1:
-            print '#', iplayer_url
-        iplayer_soup = BeautifulSoup(urlopen(iplayer_url))
-        ram_url = iplayer_soup.find('a', attrs={'href': re.compile(r'\.ram$')})['href']
-        if options.debug > 1:
-            print '#', ram_url
-        rtsp_url = urlopen(ram_url).read()
-        if options.seek:
-            rtsp_url += '&start=%d' % (60 * options.seek)
-        mplayer.append(rtsp_url)
-        if options.debug > 0:
-            print '#', ' '.join(mplayer)
-        if options.debug < 3:
-            subprocess.call(mplayer)
+        m = re.match(r'(.*):\s+(\d+)/(\d+)/(\d+)\Z', entry.title)
+        dumpfile = '-'.join(m.group(i) for i in (1, 4, 3, 2)) if m else entry.title
+        dumpfile = re.sub(r'[^\w]+', '-', dumpfile.lower()) + '.ra'
+        if not options.cache or not os.path.exists(dumpfile):
+            mplayer = ['mplayer', '-bandwidth', '10000000', '-rtsp-stream-over-tcp']
+            if options.action == 'play':
+                mplayer.extend(['-cache', '65536'])
+            elif options.action == 'rip':
+                mplayer.extend(['-dumpstream', '-dumpfile', dumpfile])
+            content_soup = BeautifulSoup(entry.content[0].value)
+            iplayer_url = content_soup.find('a')['href']
+            if options.debug > 0:
+                print '#', iplayer_url
+            iplayer_soup = BeautifulSoup(urlopen(iplayer_url))
+            ram_url = iplayer_soup.find('a', attrs={'href': re.compile(r'\.ram$')})['href']
+            if options.debug > 0:
+                print '#', ram_url
+            rtsp_url = urlopen(ram_url).read()
+            if options.seek:
+                rtsp_url += '&start=%d' % (60 * options.seek)
+            mplayer.append(rtsp_url)
+            if options.debug > 0:
+                print '#', ' '.join(mplayer)
+            if options.debug < 2:
+                subprocess.call(mplayer)
+        elif options.action == 'play':
+            mplayer = ['mplayer', dumpfile]
+            if options.debug > 0:
+                print '#', ' '.join(mplayer)
+            if options.debug < 2:
+                subprocess.call(mplayer)
+        if options.action == 'rip' and options.format == 'mp3':
+            basename = os.path.splitext(dumpfile)[0]
+            wav = os.path.join(gettempdir(), basename + '.wav')
+            mp3 = basename + '.mp3'
+            try:
+                if options.debug > 0:
+                    print '#', 'mkfifo', wav
+                if options.debug < 2:
+                    if os.path.exists(wav):
+                        os.unlink(wav)
+                    os.mkfifo(wav)
+                mplayer = ['mplayer', '-ao', 'pcm:fast:file=%s' % wav, '-quiet', '-really-quiet', '-vc', 'dummy', '-vo', 'null', dumpfile]
+                if options.debug > 0:
+                    print '#', ' '.join(mplayer)
+                if options.debug < 2:
+                    mplayer = subprocess.Popen(mplayer)
+                lame = ['lame', '--vbr-new', '--tt', entry.title, wav, mp3]
+                if options.debug > 0:
+                    print '#', ' '.join(lame)
+                if options.debug < 2:
+                    lame = subprocess.call(lame)
+                    mplayer.wait()
+            finally:
+                try:
+                    if options.debug < 2:
+                        os.unlink(wav)
+                except:
+                    pass
 
 
 if __name__ == '__main__':
