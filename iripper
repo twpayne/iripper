@@ -48,7 +48,7 @@ def main(argv):
         if cp.has_option('iripper', 'feed'):
             op.set_defaults(feed=cp.get('iripper', 'feed'))
         if cp.has_option('iripper', 'debug'):
-            op.set_defaults(feed=cp.getint('iripper', 'debug'))
+            op.set_defaults(debug=cp.getint('iripper', 'debug'))
     options, args = op.parse_args(argv[1:])
     if options.debug > 1:
         print '#', options.feed
