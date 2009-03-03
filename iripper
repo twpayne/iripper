@@ -62,7 +62,10 @@ def main(argv):
     options, args = op.parse_args(argv[1:])
     if options.debug > 0:
         print '#', options.feed
-    for entry in feedparser.parse(options.feed).entries:
+    feed = feedparser.parse(options.feed)
+    artist = feed.feed.author
+    album = re.sub(r'\ABBC iPlayer - ', '', re.sub(r' programmes\Z', '', feed.feed.title))
+    for entry in feed.entries:
         if args and not any(re.search(arg, entry.title, re.I) for arg in args):
             continue
         if options.action == 'list':
@@ -117,7 +120,7 @@ def main(argv):
                     print '#', ' '.join(mplayer)
                 if options.debug < 2:
                     mplayer = subprocess.Popen(mplayer)
-                lame = ['lame', '--vbr-new', '--tt', entry.title, wav, mp3]
+                lame = ['lame', '--vbr-new', '--ta', artist, '--tl', album, '--tt', entry.title, wav, mp3]
                 if options.debug > 0:
                     print '#', ' '.join(lame)
                 if options.debug < 2:
